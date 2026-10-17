@@ -1,0 +1,17 @@
+# build output and binaries (attach the executable to a GitHub release instead)
+build/
+*.exe
+*.obj
+*.mod
+
+# Python
+__pycache__/
+*.pyc
+
+# SWAT+ run outputs
+*_day.txt
+*_mon.txt
+*_yr.txt
+*_aa.txt
+fort.*
+*.log

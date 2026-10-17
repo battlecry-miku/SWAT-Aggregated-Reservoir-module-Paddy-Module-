@@ -1,0 +1,2 @@
+*.patch text eol=lf
+*.f90 text eol=lf

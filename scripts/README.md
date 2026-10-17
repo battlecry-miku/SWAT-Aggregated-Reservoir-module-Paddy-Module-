@@ -1,0 +1,20 @@
+# Scripts
+
+Python 3 (tested with 3.13) with `numpy` and `pandas`. The scripts are copied as used in the
+study. They expect the original working layout: data folders such as
+`swat_real_rerun_20260830/...` sit next to the scripts, and `apply_powerlaw.py` and
+`build_scales.py` point to a local QSWAT+ project database. Edit the path constants at the top of
+each script before reuse.
+
+| Script | Purpose |
+|---|---|
+| `apply_powerlaw.py` | Assigns pond capacities *V*<sub>j</sub> = *c* *A*<sub>j</sub><sup>*b*</sup> (*b* = 1.4367) and writes the aggregated OFR volumes into `hydrology.res` |
+| `build_kappa.py` | Rewrites the hillslope-to-OFR routing fractions *f* = min(1, κ *A*<sub>OFR</sub>/*A*<sub>unit</sub>) in `rout_unit.con` |
+| `build_scales.py` | Builds the S1–S3 configurations from the S4 baseline so that they differ only in OFR aggregation; `--canal` rescales the canal quotas (E2) |
+| `preflight_check.py` | Checks inputs before a run (total OFR capacity, interception fraction, canal quotas, parameter files identical across scenarios) |
+| `run_batch2.py` | Runs S0–S4 with one set of calibrated parameters |
+| `run_matrix.py` | One-factor-at-a-time matrix (n, κ, PETCO) crossed with the aggregation scales |
+| `dds_calibrate.py` | Two-layer multi-start DDS calibration (12 hydrology/soil, then 6 channel parameters) against log-transformed outlet flow |
+| `eval_outlet.py` | Outlet performance metrics (logNSE, NSE, KGE, PBIAS) against Taoxi station |
+| `summarize_run.py` | Builds water-allocation, paddy and reservoir summary tables, then prunes large outputs |
+| `postrun_check.py` | Checks a finished run (canal cap respected, no direct canal supply to paddies in OFR scenarios, deficit thresholds) |

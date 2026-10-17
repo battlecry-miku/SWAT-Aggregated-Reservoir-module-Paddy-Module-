@@ -1,0 +1,30 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the associated paper and SWAT+."
+title: "swatplus-ofr-paddy: SWAT+ rev.62 extension for aggregated on-farm reservoirs coupled with paddy irrigation"
+type: software
+version: 0.1.0
+license: LGPL-2.1-only
+authors:
+  - family-names: Zhu
+    given-names: Zhe
+    affiliation: "School of Civil Engineering, Hefei University of Technology"
+  - family-names: Li
+    given-names: Yu
+    affiliation: "School of Hydraulic Engineering, Dalian University of Technology"
+  - family-names: Pei
+    given-names: Shengwei
+    affiliation: "Department of Civil and Environmental Engineering, National University of Singapore"
+  - family-names: Zhang
+    given-names: Chi
+    affiliation: "School of Hydraulic Engineering, Dalian University of Technology"
+  - family-names: Zhou
+    given-names: Yuliang
+    affiliation: "School of Civil Engineering, Hefei University of Technology"
+references:
+  - type: software
+    title: "Soil and Water Assessment Tool Plus (SWAT+)"
+    repository-code: "https://github.com/swat-model/swatplus"
+    commit: cb442f7c05fc3bfc34349c446010f452d2737ca0
+    authors:
+      - family-names: Arnold
+        given-names: Jeffrey G.

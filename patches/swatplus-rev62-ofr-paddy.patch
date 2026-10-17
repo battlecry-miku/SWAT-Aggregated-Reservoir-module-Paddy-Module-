@@ -1,0 +1,658 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index efa4e69..b7e9ffc 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -90,10 +90,13 @@ elseif(WIN32)
+         set(frelease        "/O")
+         set(FFC             "ifx")
+     elseif(CMAKE_Fortran_COMPILER_ID MATCHES GNU)
+-        set(fdialect        "-cpp -fcheck=all -ffpe-trap=invalid,zero,overflow,underflow -fimplicit-none -ffree-line-length-none -fbacktrace -finit-local-zero -fno-unsafe-math-optimizations -frounding-math -fsignaling-nans")
+-        set(fdebug          "-Wall ")
++        # -fcheck=all / -ffpe-trap / -fsignaling-nans are DEBUG-only diagnostics;
++        # stock SWAT+ performs benign underflows, so keep them out of the default
++        # (release) dialect or the model SIGFPEs during normal initialization.
++        set(fdialect        "-cpp -fimplicit-none -ffree-line-length-none -fbacktrace -finit-local-zero -fno-unsafe-math-optimizations -frounding-math")
++        set(fdebug          "-Wall -fcheck=all -ffpe-trap=invalid,zero,overflow,underflow -fsignaling-nans")
+         set(FFC             "gnu")
+-        set(frelease        "-O")
++        set(frelease        "-O2")
+         link_libraries("-static")
+     endif()
+ endif()
+diff --git a/src/basin_module.f90 b/src/basin_module.f90
+index 0543b31..21ccfb0 100644
+--- a/src/basin_module.f90
++++ b/src/basin_module.f90
+@@ -62,7 +62,7 @@
+                                  !!   1 = depth using drainmod water table depth routine
+         integer :: sol_p_model=0 !! 0 = original soil P model in SWAT documentation
+                                  !! 1 = new soil P model in Vadas and White (2010)
+-        integer :: gampt = 0     !! 0 = curve number; 1 = Green and Ampt 
++        integer :: gampt = 0     !! 0 = curve number; 1 = Green and Ampt; 2 = saturation-excess (Xinanjiang)
+         character(len=1) :: atmo = "a"   !! not used
+         integer :: smax = 0      !! not used
+         integer :: qual2e = 0    !! 0 = instream nutrient routing using QUAL2E 
+@@ -131,9 +131,11 @@
+         real :: co2 = 400.          !! co2 concentration at start of simulation (ppm)
+         integer :: day_lag_mx = 0   !! max days to lag hydrographs for hru, ru and channels
+                                     !!  non-draining soils
+-        integer :: igen = 5         !!  random generator code: 
++        integer :: igen = 5         !!  random generator code:
+                                     !!   0 = use default numbers
+-                                    !!   1 = generate new numbers in every simulation 
++                                    !!   1 = generate new numbers in every simulation
++        real :: satx_b = 0.30       !! none |saturation-excess tension-water-capacity curve exponent (gampt=2)
++        real :: satx_wmfac = 1.0    !! none |saturation-excess WM as a fraction of field-capacity storage (gampt=2)
+       end type basin_parms
+       type (basin_parms) :: bsn_prm
+ 
+diff --git a/src/cal_parm_select.f90 b/src/cal_parm_select.f90
+index a51991d..e06cdc0 100644
+--- a/src/cal_parm_select.f90
++++ b/src/cal_parm_select.f90
+@@ -383,7 +383,15 @@
+       case ("adj_pkr")
+         bsn_prm%adj_pkr = chg_par(bsn_prm%adj_pkr,                      &
+                          chg_typ, chg_val, absmin, absmax)
+-        
++
++      case ("satx_b")
++        bsn_prm%satx_b = chg_par(bsn_prm%satx_b,                        &
++                         chg_typ, chg_val, absmin, absmax)
++
++      case ("satx_wmfac")
++        bsn_prm%satx_wmfac = chg_par(bsn_prm%satx_wmfac,               &
++                         chg_typ, chg_val, absmin, absmax)
++
+       case ("prf")
+         bsn_prm%prf = chg_par(bsn_prm%prf,                              &
+                          chg_typ, chg_val, absmin, absmax)
+diff --git a/src/ch_temp.f90 b/src/ch_temp.f90
+index 82ad9f2..6ce9078 100644
+--- a/src/ch_temp.f90
++++ b/src/ch_temp.f90
+@@ -140,7 +140,7 @@
+       
+       ht1 = ob(iob)%hd(1)
+       do in = 1, ob(iob)%rcv_tot
+-          if (ob(iob)%obtyp_in(in) == "chandeg") then
++          if (ob(iob)%obtyp_in(in) == "chandeg" .and. in > 1) then
+               trib1_temp = ob(iob)%hin_d(in-1)%temp
+               trib2_temp = ob(iob)%hin_d(in)%temp
+               trib1_flo = ob(iob)%hin_d(in-1)%flo/86400
+@@ -197,8 +197,10 @@
+       ! summing HRU output for the landscape unit
+       do ru_index = 1, ru_count
+           ilsu = ruid_array(ru_index) 
++          if (ilsu < 1 .or. ilsu > db_mx%lsu_out) cycle
+           do ielem = 1, lsu_out(ilsu)%num_tot
+             ihru = lsu_out(ilsu)%num(ielem)
++            if (ihru < 1 .or. ihru > size(lsu_elem)) cycle
+             if (lsu_elem(ihru)%ru_frac > 1.e-9) then
+               const = lsu_elem(ihru)%ru_frac
+               if (lsu_elem(ihru)%obtyp == "hru") then
+@@ -450,4 +452,4 @@
+     
+       return    
+ 	end subroutine ch_temp
+-	
+\ No newline at end of file
++	
+diff --git a/src/ero_ovrsed.f90 b/src/ero_ovrsed.f90
+index ac44638..83a65fe 100644
+--- a/src/ero_ovrsed.f90
++++ b/src/ero_ovrsed.f90
+@@ -121,9 +121,9 @@
+         canopy_cover = pcom(j)%lai_sum
+       end if
+ 
+-      if (bsn_cc%gampt > 0) then
++      if (bsn_cc%gampt == 1) then   ! only Green-Ampt uses subdaily intensity; sat-excess (2) is daily
+       do k = 1, time%step
+-      rintnsty = 60. * wst(iwst)%weat%ts(k) / Real(time%dtm) 
++      rintnsty = 60. * wst(iwst)%weat%ts(k) / Real(time%dtm)
+       rain_d50 = 0.188 * rintnsty ** 0.182
+ 
+       if (rintnsty > 0) then
+diff --git a/src/hyd_connect.f90 b/src/hyd_connect.f90
+index ddbdf99..e1024f2 100644
+--- a/src/hyd_connect.f90
++++ b/src/hyd_connect.f90
+@@ -128,7 +128,7 @@
+         call hyd_read_connect(in_con%hru_con, "hru     ", sp_ob1%hru, sp_ob%hru, hd_tot%hru, bsn_prm%day_lag_mx)     
+       end if
+       
+-      !read connect file for hru_lte"s
++      !read connect file for hru_lte objects
+       if (sp_ob%hru_lte > 0) then
+         call hyd_read_connect(in_con%hruez_con, "hru_lte ", sp_ob1%hru_lte, sp_ob%hru_lte, hd_tot%hru_lte, bsn_prm%day_lag_mx) 
+       end if
+@@ -177,7 +177,7 @@
+       if (sp_ob%outlet > 0) then
+         call hyd_read_connect(in_con%out_con, "outlet  ", sp_ob1%outlet, sp_ob%outlet, hd_tot%outlet, bsn_prm%day_lag_mx)
+       end if
+-          
++
+       !read connect file for swat-deg channels
+       if (sp_ob%chandeg > 0) then
+         call hyd_read_connect(in_con%chandeg_con, "chandeg ", sp_ob1%chandeg, sp_ob%chandeg, hd_tot%chandeg, bsn_prm%day_lag_mx)
+@@ -335,7 +335,7 @@
+           allocate (ob(i)%ihtyp_in(nspu), source = 0)
+           allocate (ob(i)%frac_in(nspu), source = 0.)
+           allocate (ob(i)%hin_uh(nspu))
+-          !! allocate unit hyd for all incoming hyd's
++          !! allocate unit hyd for all incoming hydrographs
+           do ii = 1, nspu
+             allocate (ob(i)%hin_uh(ii)%uh(bsn_prm%day_lag_mx,time%step), source = 0.)
+             allocate (ob(i)%hin_uh(ii)%hyd_flo(bsn_prm%day_lag_mx,time%step), source = 0.)
+@@ -512,7 +512,7 @@
+                 ob(i)%cmd_order = iorder + 1
+               end if
+               
+-              if (ob(i)%typ /= "exco") then   !exco"s are not commands
++              if (ob(i)%typ /= "exco") then   !exco objects are not commands
+                 ob(i)%cmd_prev = cmd_prev
+                 if (cmd_prev > 0) then
+                   ob(cmd_prev)%cmd_next = i
+@@ -522,7 +522,7 @@
+                 cmd_prev = i
+                 !rcv_sum(i) = rcv_sum(i) + 1
+                 ob(i)%cmd_order = iord
+-              end if  !exco"s are not commands
++              end if  !exco objects are not commands
+             
+             end do
+             end if
+@@ -531,7 +531,7 @@
+         iord = iord + 1
+       end do
+ 
+-    !! write calculated and input drainage areas for all objects except hru's
++    !! write calculated and input drainage areas for all objects except hru objects
+       do iob = 1, sp_ob%objs
+         if (ob(iob)%typ /= "hru" .and. ob(iob)%typ /= "ru") then
+           write (9004,*) iob, ob(iob)%typ, ob(iob)%num, ob(iob)%area_ha, ob(iob)%area_ha_calc,             &
+@@ -544,4 +544,4 @@
+ 1002  format (5x,/,"ERROR - An infinite loop is detected in the connect file(s)",/, 15x, "the simulation will end",       &
+                        /, 9x, "(review looping.con file for more info)",/)
+       return
+-      end subroutine hyd_connect
+\ No newline at end of file
++      end subroutine hyd_connect
+diff --git a/src/res_control.f90 b/src/res_control.f90
+index 28a56ce..3523317 100644
+--- a/src/res_control.f90
++++ b/src/res_control.f90
+@@ -25,6 +25,14 @@
+       real :: weir_hgt = 0.
+       real :: alpha_up = 0.
+       real :: alpha_down = 0.
++      logical, save :: ofr_curve_loaded = .false.
++      logical, save :: ofr_curve_enabled = .false.
++      real, save :: ofr_n_ret = 0.5
++      logical :: ofr_curve_exists = .false.
++      integer :: ofr_curve_ios = 0
++      character(len=32) :: ofr_curve_key = ""
++      real :: ofr_storage_ratio = 0.
++      real :: ofr_retain_frac = 1.
+ 
+       external :: gwflow_reservoir
+       integer :: dom            = 0                                           !           |Day of month
+@@ -40,6 +48,25 @@
+       ht2 = resz            !! zero outgoing flow, sediment and nutrients
+       hcs2 = hin_csz        !! zero outgoing constituents
+ 
++      if (.not. ofr_curve_loaded) then
++        inquire (file="ofr_curve.par", exist=ofr_curve_exists)
++        if (ofr_curve_exists) then
++          open (1909, file="ofr_curve.par", status="old", action="read", iostat=ofr_curve_ios)
++          if (ofr_curve_ios == 0) then
++            read (1909,*,iostat=ofr_curve_ios) ofr_curve_key, ofr_n_ret
++            if (ofr_curve_ios /= 0) then
++              rewind (1909)
++              read (1909,*,iostat=ofr_curve_ios) ofr_n_ret
++            end if
++            close (1909)
++            if (ofr_curve_ios == 0 .and. ofr_n_ret > 0.) then
++              ofr_curve_enabled = .true.
++            end if
++          end if
++        end if
++        ofr_curve_loaded = .true.
++      end if
++
+       if (time%yrc > res_hyd(jres)%iyres .or. (time%mo >= res_hyd(jres)%mores   &
+                                    .and. time%yrc == res_hyd(jres)%iyres)) then
+         iob = res_ob(jres)%ob
+@@ -55,6 +82,14 @@
+         wbody_wb => res_wat_d(jres)
+         wbody_prm => res_prm(jres)
+       
++        if (ofr_curve_enabled .and. res_ob(jres)%pvol > 1.e-6 .and. ht1%flo > 0.) then
++          !! Vc = principal spillway volume: the level at which the ponds actually spill
++          ofr_storage_ratio = min(1., max(0., res(jres)%flo / res_ob(jres)%pvol))
++          ofr_retain_frac = min(1., max(0., (1. - ofr_storage_ratio) ** ofr_n_ret))
++          ht2 = ht2 + (1. - ofr_retain_frac) * ht1
++          ht1 = ofr_retain_frac * ht1
++        end if
++
+         !! add incoming flow to reservoir
+         res(jres) = res(jres) + ht1
+ 
+diff --git a/src/sd_channel_control3.f90 b/src/sd_channel_control3.f90
+index c69b0d3..6731545 100644
+--- a/src/sd_channel_control3.f90
++++ b/src/sd_channel_control3.f90
+@@ -49,6 +49,8 @@
+       real :: aqu_inflo = 0.          !m3            |aquifer inflow if using geomorphic baseflow
+       integer :: iw = 0               !              |counter for water allocation object
+       integer :: iwallo = 0           !              |variable to pass to wallo_control
++      integer :: itrn_scan = 0        !              |water-allocation transfer scan counter
++      integer :: trn_cur_save = 0     !              |preserve non-channel allocation pointer
+       
+       ich = isdch
+       isd_db = sd_dat(ich)%hyd
+@@ -322,14 +324,19 @@
+ 
+       ich = isdch
+             
+-      !! allocate water for transfers that don't include a channel as a source
++      !! allocate water for transfers that include the current channel as a source
+       if (db_mx%wallo_db > 0) then
+         do iwallo = 1, db_mx%wallo_db
+-          do while (wallo(iwallo)%trn(wallo(iwallo)%trn_cur)%ch_src == ich)
+-            iw = iwallo
+-            trn_m3 = ht2%flo
+-            if (wallo(iwallo)%trn_cur <= wallo(iwallo)%trn_obs) call wallo_control (iw)
++          trn_cur_save = wallo(iwallo)%trn_cur
++          do itrn_scan = 1, wallo(iwallo)%trn_obs
++            if (wallo(iwallo)%trn(itrn_scan)%ch_src == ich) then
++              iw = iwallo
++              trn_m3 = ht2%flo
++              wallo(iwallo)%trn_cur = itrn_scan
++              call wallo_control (iw)
++            end if
+           end do
++          wallo(iwallo)%trn_cur = trn_cur_save
+         end do
+       end if
+ 
+@@ -359,7 +366,14 @@
+       end if
+       
+       !! calculate stream temperature (component mixing model)
+-      call ch_temp
++      !! Disabled in the Taoxi OFR water-quantity smoke-test executable.
++      !! The inserted channel-scale OFR topology can leave some channel
++      !! temperature bookkeeping arrays inconsistent in Rev62-derived builds,
++      !! causing a CH_TEMP access violation before any hydrologic diagnostics
++      !! are written.  This patched executable is therefore valid only for
++      !! water-quantity routing tests and not for water-temperature or
++      !! water-quality analyses.
++      !call ch_temp
+       
+       !! set constituents for routing
+       if (cs_db%num_pests > 0) then
+@@ -490,4 +504,4 @@
+ 
+       return
+       
+-      end subroutine sd_channel_control3
+\ No newline at end of file
++      end subroutine sd_channel_control3
+diff --git a/src/sq_surfst.f90 b/src/sq_surfst.f90
+index 4caae8b..197b09a 100644
+--- a/src/sq_surfst.f90
++++ b/src/sq_surfst.f90
+@@ -42,7 +42,7 @@
+ 
+       j = ihru
+ 
+-      if (bsn_cc%gampt == 0) then   
++      if (bsn_cc%gampt == 0 .or. bsn_cc%gampt == 2) then   ! 2 = saturation-excess: daily routing like CN
+         bsprev = surf_bs(1,j)
+         surf_bs(1,j) = Max(1.e-6, surf_bs(1,j) + surfq(j))
+         qday = surf_bs(1,j) * brt(j)
+diff --git a/src/sq_volq.f90 b/src/sq_volq.f90
+index 02a0255..24a976d 100644
+--- a/src/sq_volq.f90
++++ b/src/sq_volq.f90
+@@ -17,11 +17,13 @@
+       
+       implicit none
+       
+-      external :: sq_daycn, sq_greenampt
++      external :: sq_daycn, sq_greenampt, sq_satexcess
+ 
+ !! Compute surface runoff for day
+       if (bsn_cc%gampt == 0) then
+         call sq_daycn
++      else if (bsn_cc%gampt == 2) then
++        call sq_satexcess
+       else
+         call sq_greenampt
+       end if
+diff --git a/src/wallo_control.f90 b/src/wallo_control.f90
+index 8411ed6..367a2c4 100644
+--- a/src/wallo_control.f90
++++ b/src/wallo_control.f90
+@@ -26,7 +26,11 @@
+       real :: irr_mm = 0.                   !mm     |irrigation applied
+       real :: div_total = 0.                !m3     |cumulative available diversion water
+       real :: div_daily = 0.                !m3     |daily water diverted for irrigation
+-      
++      logical :: is_ofr_topup = .false.
++      real :: cap_remaining = 0.
++      real :: trn_cap_remaining = 0.
++      real :: unl_left0 = 0.                !m3     |canal water available before withdrawal
++
+       !! zero total transfer and treatment and use outflows
+       wal_omd(iwallo)%trn(:)%h_tot = hz
+       
+@@ -41,7 +45,40 @@
+           
+         !! set demand for each transfer object - wallod_out(iwallo)%trn(itrn)%trn_flo
+         call wallo_demand (iwallo, itrn)
+-        
++
++        if (allocated(wallo_topup_ytd)) then
++          if (wallo_topup_yrc /= time%yrc) then
++            wallo_topup_ytd = 0.
++            if (allocated(wallo_topup_trn_ytd)) wallo_topup_trn_ytd = 0.
++            wallo_topup_yrc = time%yrc
++          end if
++        end if
++        is_ofr_topup = index(trim(wallo(iwallo)%trn(itrn)%trn_typ_name), "topup_res") == 1
++        if (is_ofr_topup .and. allocated(wallo_topup_ytd)) then
++          cap_remaining = max(0., wallo_topup_cap_m3 - wallo_topup_ytd(iwallo))
++          if (allocated(wallo_topup_trn_ytd) .and. itrn <= wallo_topup_max_trn) then
++            if (wallo(iwallo)%trn(itrn)%amount > 0.) then
++              trn_cap_remaining = max(0., wallo(iwallo)%trn(itrn)%amount - wallo_topup_trn_ytd(iwallo, itrn))
++              cap_remaining = min(cap_remaining, trn_cap_remaining)
++            end if
++          end if
++          wallod_out(iwallo)%trn(itrn)%trn_flo = min(wallod_out(iwallo)%trn(itrn)%trn_flo, cap_remaining)
++        end if
++
++        !! direct canal irrigation: only the unl withdrawal is capped (basin cap and transfer amount)
++        wallo_unl_capped = .false.
++        if (.not. is_ofr_topup .and. allocated(wallo_topup_ytd)) then
++          if (any(wallo(iwallo)%trn(itrn)%src(:)%typ == "unl")) then
++            wallo_unl_capped = .true.
++            wallo_unl_left = max(0., wallo_topup_cap_m3 - wallo_topup_ytd(iwallo))
++            if (itrn <= wallo_topup_max_trn .and. wallo(iwallo)%trn(itrn)%amount > 0.) then
++              wallo_unl_left = min(wallo_unl_left,                                                 &
++                max(0., wallo(iwallo)%trn(itrn)%amount - wallo_topup_trn_ytd(iwallo, itrn)))
++            end if
++            unl_left0 = wallo_unl_left
++          end if
++        end if
++
+         !! initialize unmet to total demand and subtract as water is withdrawn
+         wallo(iwallo)%trn(itrn)%unmet_m3 = wallod_out(iwallo)%trn(itrn)%trn_flo
+       
+@@ -83,7 +120,23 @@
+             wallo(iwallo)%trn(itrn)%withdr_tot = wallo(iwallo)%trn(itrn)%withdr_tot +           &
+                                                   wallod_out(iwallo)%trn(itrn)%src(isrc)%withdr
+           end do
+-        
++          if (is_ofr_topup .and. allocated(wallo_topup_ytd)) then
++            wallo_topup_ytd(iwallo) = min(wallo_topup_cap_m3,                                     &
++                                          wallo_topup_ytd(iwallo) + wallo(iwallo)%trn(itrn)%withdr_tot)
++            if (allocated(wallo_topup_trn_ytd) .and. itrn <= wallo_topup_max_trn) then
++              if (wallo(iwallo)%trn(itrn)%amount > 0.) then
++                wallo_topup_trn_ytd(iwallo, itrn) = min(wallo(iwallo)%trn(itrn)%amount,             &
++                  wallo_topup_trn_ytd(iwallo, itrn) + wallo(iwallo)%trn(itrn)%withdr_tot)
++              end if
++            end if
++          end if
++          if (wallo_unl_capped) then
++            wallo_topup_ytd(iwallo) = wallo_topup_ytd(iwallo) + (unl_left0 - wallo_unl_left)
++            if (itrn <= wallo_topup_max_trn .and. wallo(iwallo)%trn(itrn)%amount > 0.) then
++              wallo_topup_trn_ytd(iwallo, itrn) = wallo_topup_trn_ytd(iwallo, itrn) + (unl_left0 - wallo_unl_left)
++            end if
++          end if
++
+           !! transfer water (pipes) to receiving object from all sources
+           call wallo_transfer (iwallo, itrn)
+         
+@@ -131,7 +184,10 @@
+               !! reservoir transfer - maintain reservoir levels at a specified level or required transfer
+               res(j) = res(j) + wal_omd(iwallo)%trn(itrn)%h_tot
+               if (ob(res_ob(j)%ob)%rcv_tot == 0) then
++                iob = icmd
++                icmd = res_ob(j)%ob
+                 call res_control (j)
++                icmd = iob
+               end if 
+             
+             case ("aqu")
+@@ -183,4 +239,4 @@
+         if (wallo(iwallo)%trn_cur > wallo(iwallo)%trn_obs) wallo(iwallo)%trn_cur = 0
+         
+       return
+-      end subroutine wallo_control
+\ No newline at end of file
++      end subroutine wallo_control
+diff --git a/src/wallo_demand.f90 b/src/wallo_demand.f90
+index fb3caf3..03dae90 100644
+--- a/src/wallo_demand.f90
++++ b/src/wallo_demand.f90
+@@ -92,6 +92,7 @@ subroutine wallo_demand (iwallo, itrn)
+         id = wallo(iwallo)%trn(itrn)%dtbl_num
+         d_tbl => dtbl_flo(id)
+         j = 0
++        trn_m3 = 0.
+         call conditions (j, id)
+         call actions (j, icmd, id)
+         wallod_out(iwallo)%trn(itrn)%trn_flo = trn_m3
+@@ -113,4 +114,4 @@ subroutine wallo_demand (iwallo, itrn)
+       end select
+ 
+       return
+-      end subroutine wallo_demand
+\ No newline at end of file
++      end subroutine wallo_demand
+diff --git a/src/wallo_withdraw.f90 b/src/wallo_withdraw.f90
+index 407ae26..02be470 100644
+--- a/src/wallo_withdraw.f90
++++ b/src/wallo_withdraw.f90
+@@ -17,6 +17,7 @@ subroutine wallo_withdraw (iwallo, itrn, isrc)
+       integer :: iom = 0            !           |recall id
+       real :: res_min = 0.          !m3         |min reservoir volume for withdrawal
+       real :: res_vol = 0.          !m3         |reservoir volume after withdrawal
++      real :: res_avail = 0.        !m3         |reservoir volume available above minimum storage
+       real :: can_min = 0.          !m3         |min canal volume for withdrawal
+       real :: can_vol = 0.          !m3         |canal volume after withdrawal
+       real :: cha_min = 0.          !m3         |minimum allowable flow in channel after withdrawal
+@@ -159,22 +160,25 @@ subroutine wallo_withdraw (iwallo, itrn, isrc)
+           end if
+          
+         !! reservoir source
+-        case ("res") 
+-          j = wallo(iwallo)%trn(itrn)%src(isrc)%num
+-          res_min = wallo(iwallo)%trn(itrn)%src(isrc)%wdraw_lim * res_ob(j)%pvol
+-          res_vol = res(j)%flo - trn_m3
+-          !! check if withdrawal takes storage below the minimum
+-          if (res_vol > res_min) then
+-            rto = trn_m3 / res(j)%flo
+-            wal_omd(iwallo)%trn(itrn)%src(isrc)%hd = rto * res(j)
+-            res(j) = (1. - rto) * res(j)
+-            wallod_out(iwallo)%trn(itrn)%src(isrc)%withdr = wallod_out(iwallo)%trn(itrn)%src(isrc)%withdr + trn_m3
+-            
+-          else
+-            wallod_out(iwallo)%trn(itrn)%src(isrc)%unmet = wallod_out(iwallo)%trn(itrn)%src(isrc)%unmet + trn_m3
+-            wallod_out(iwallo)%trn(itrn)%src(isrc)%unmet = Min (wallod_out(iwallo)%trn(itrn)%src(isrc)%unmet,      &
+-                                                                wallod_out(iwallo)%trn(itrn)%src(isrc)%demand)
+-          end if
++      case ("res") 
++        j = wallo(iwallo)%trn(itrn)%src(isrc)%num
++        res_min = wallo(iwallo)%trn(itrn)%src(isrc)%wdraw_lim * res_ob(j)%pvol
++        res_avail = Max(0., res(j)%flo - res_min)
++        withdraw = Min(trn_m3, res_avail)
++        res_vol = res(j)%flo - withdraw
++        !! withdraw the available volume above the minimum storage
++        if (withdraw > 1.e-6 .and. res(j)%flo > 1.e-6) then
++          rto = withdraw / res(j)%flo
++          wal_omd(iwallo)%trn(itrn)%src(isrc)%hd = rto * res(j)
++          res(j) = (1. - rto) * res(j)
++          wallod_out(iwallo)%trn(itrn)%src(isrc)%withdr = wallod_out(iwallo)%trn(itrn)%src(isrc)%withdr + withdraw
++        end if
++        if (withdraw < trn_m3) then
++          unmet = trn_m3 - withdraw
++          wallod_out(iwallo)%trn(itrn)%src(isrc)%unmet = wallod_out(iwallo)%trn(itrn)%src(isrc)%unmet + unmet
++          wallod_out(iwallo)%trn(itrn)%src(isrc)%unmet = Min (wallod_out(iwallo)%trn(itrn)%src(isrc)%unmet, &
++                                                            wallod_out(iwallo)%trn(itrn)%src(isrc)%demand)
++        end if
+          
+         !! aquifer source
+         case ("aqu") 
+@@ -214,6 +218,10 @@ subroutine wallo_withdraw (iwallo, itrn, isrc)
+             
+           !! unlimited source
+           case ("unl")
++            if (wallo_unl_capped) then
++              trn_m3 = min(trn_m3, wallo_unl_left)
++              wallo_unl_left = wallo_unl_left - trn_m3
++            end if
+             wal_omd(iwallo)%trn(itrn)%src(isrc)%hd%flo = trn_m3
+             wallod_out(iwallo)%trn(itrn)%src(isrc)%withdr = wallod_out(iwallo)%trn(itrn)%src(isrc)%withdr + trn_m3
+           end select
+diff --git a/src/water_allocation_module.f90 b/src/water_allocation_module.f90
+index fe53957..9f10ca7 100644
+--- a/src/water_allocation_module.f90
++++ b/src/water_allocation_module.f90
+@@ -4,7 +4,15 @@
+             
+       real :: trans_m3 = 0.
+       real :: trn_m3 = 0.                   !m3     |demand
+-      
++      real, dimension(:), allocatable :: wallo_topup_ytd
++      real, dimension(:,:), allocatable :: wallo_topup_trn_ytd
++      integer :: wallo_topup_yrc = -9999
++      real :: wallo_topup_cap_m3 = 518000000.
++      integer, parameter :: wallo_topup_max_trn = 20000
++      !! direct canal irrigation (a non-topup transfer with an unl source) shares the canal cap
++      logical :: wallo_unl_capped = .false. !       |current transfer draws capped canal water
++      real :: wallo_unl_left = 0.           !m3     |canal water still available to it
++
+       !! transfer source objects
+       type transfer_source_objects
+         character (len=10) :: typ = ""          !source object type
+@@ -270,4 +278,4 @@
+         wallo2%unmet = wallo1%unmet / const
+       end function wallo_div_const
+ 
+-    end module water_allocation_module
+\ No newline at end of file
++    end module water_allocation_module
+diff --git a/src/water_allocation_read.f90 b/src/water_allocation_read.f90
+index 9d820cd..49b04e5 100644
+--- a/src/water_allocation_read.f90
++++ b/src/water_allocation_read.f90
+@@ -42,6 +42,8 @@
+       inquire (file=in_watrts%transfer_wro, exist=i_exist)
+       if (.not. i_exist .or. in_watrts%transfer_wro == "null") then
+         allocate (wallo(0:0))
++        if (allocated(wallo_topup_ytd)) deallocate(wallo_topup_ytd)
++        if (allocated(wallo_topup_trn_ytd)) deallocate(wallo_topup_trn_ytd)
+       else
+       do 
+         open (107,file=in_watrts%transfer_wro)
+@@ -60,6 +62,11 @@
+         allocate (wallom_out(imax))
+         allocate (walloy_out(imax))
+         allocate (walloa_out(imax))
++        if (allocated(wallo_topup_ytd)) deallocate(wallo_topup_ytd)
++        if (allocated(wallo_topup_trn_ytd)) deallocate(wallo_topup_trn_ytd)
++        allocate (wallo_topup_ytd(imax), source = 0.)
++        allocate (wallo_topup_trn_ytd(imax, wallo_topup_max_trn), source = 0.)
++        wallo_topup_yrc = -9999
+ 
+         do iwro = 1, imax
+           read (107,*,iostat=eof) header
+@@ -189,4 +196,4 @@
+       close(107)
+ 
+       return
+-    end subroutine water_allocation_read
+\ No newline at end of file
++    end subroutine water_allocation_read
+diff --git a/src/sq_satexcess.f90 b/src/sq_satexcess.f90
+new file mode 100644
+index 0000000..d284ebb
+--- /dev/null
++++ b/src/sq_satexcess.f90
+@@ -0,0 +1,72 @@
++      subroutine sq_satexcess
++
++!!    ~ ~ ~ PURPOSE ~ ~ ~
++!!    Predicts daily surface runoff using a saturation-excess (Xinanjiang
++!!    "蓄满产流") tension-water-capacity curve, replacing the SCS curve number
++!!    for upland HRUs. Selected by bsn_cc%gampt == 2. Runoff begins once the
++!!    soil column approaches field capacity and grows nonlinearly with the
++!!    saturated area fraction, reproducing the sharp daily flood peaks that the
++!!    curve number smooths out in humid, saturation-excess catchments.
++!!
++!!    The scheme reuses SWAT+'s own soil-water state, so no new state is added
++!!    and mass balance closes downstream via inflpcp = precip_eff - surfq.
++!!    Paddy / wetland HRUs (ires > 0) never call this routine; their ponded
++!!    water balance in wetland_control is untouched.
++
++!!    ~ ~ ~ INCOMING VARIABLES ~ ~ ~
++!!    name              |units    |definition
++!!    soil(j)%sw        |mm H2O   |current water stored in the soil profile
++!!    soil(j)%sumfc     |mm H2O   |water held in the profile at field capacity
++!!    bsn_prm%satx_b    |none     |tension-water-capacity curve exponent
++!!    bsn_prm%satx_wmfac|none     |WM as a fraction of field-capacity storage
++!!    precip_eff        |mm H2O   |effective precipitation reaching the surface
++
++!!    ~ ~ ~ OUTGOING VARIABLES ~ ~ ~
++!!    surfq(:)          |mm H2O   |surface runoff generated for the day
++
++!!    ~ ~ ~ ~ ~ ~ END SPECIFICATIONS ~ ~ ~ ~ ~ ~
++
++      use basin_module, only : bsn_prm
++      use hru_module, only : surfq, ihru, precip_eff
++      use soil_module
++
++      implicit none
++
++      integer :: j = 0     !none    |HRU number
++      real :: wm = 0.      !mm H2O  |areal-mean tension water capacity
++      real :: wmm = 0.     !mm H2O  |maximum point tension water capacity
++      real :: w = 0.       !mm H2O  |current tension water storage (capped at wm)
++      real :: a = 0.       !mm H2O  |ordinate of current storage on the curve
++      real :: pe = 0.      !mm H2O  |effective precipitation
++      real :: r = 0.       !mm H2O  |generated runoff
++      real :: bexp = 0.    !none    |curve exponent
++
++      j = ihru
++      bexp = bsn_prm%satx_b
++      wm = bsn_prm%satx_wmfac * soil(j)%sumfc
++      if (wm < 1.) wm = 1.
++      w = soil(j)%sw
++      if (w > wm) w = wm
++      if (w < 0.) w = 0.
++
++      pe = precip_eff
++      surfq(j) = 0.
++      if (pe > 0.) then
++        wmm = wm * (1. + bexp)
++        if (w >= wm) then
++          a = wmm
++        else
++          a = wmm * (1. - (1. - w / wm) ** (1. / (1. + bexp)))
++        end if
++        if (pe + a < wmm) then
++          r = pe - (wm - w) + wm * (1. - (pe + a) / wmm) ** (1. + bexp)
++        else
++          r = pe - (wm - w)
++        end if
++        if (r < 0.) r = 0.
++        if (r > pe) r = pe
++        surfq(j) = r
++      end if
++
++      return
++      end subroutine sq_satexcess
