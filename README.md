@@ -1,11 +1,11 @@
-# swatplus-ofr-paddy
+# SWAT-Aggregated-Reservoir-module-Paddy-Module
 
 SWAT+ revision 62 extended for **aggregated on-farm reservoirs (OFRs) coupled with paddy
 irrigation and capped canal supply**, as used in:
 
 > Zhu, Z., Li, Y., Pei, S., Zhang, C., Zhou, Y. Aggregation scale of on-farm reservoir
 > representation and its cumulative effect on simulated surface hydrology and irrigation supply
-> in a paddy irrigation district. *In preparation.*
+> in a paddy irrigation district. *In preparation* (working title).
 
 Case study: the Taoxi catchment (1,577.85 km², 4,298 OFRs) in the Hangbu irrigation district,
 China. The paddy water balance is the stock SWAT+ paddy module (Jeong et al., 2025). This
@@ -49,9 +49,10 @@ Requires CMake ≥ 3.22, Ninja and gfortran. The paper used GNU Fortran 15.2.0 (
 CMake 4.3.4 and Ninja on Windows x64.
 
 ```bash
+git clone https://github.com/battlecry-miku/SWAT-Aggregated-Reservoir-module-Paddy-Module-.git ofr-paddy
 git clone https://github.com/swat-model/swatplus.git && cd swatplus
 git checkout cb442f7c05fc3bfc34349c446010f452d2737ca0
-git apply --ignore-whitespace ../swatplus-ofr-paddy/patches/swatplus-rev62-ofr-paddy.patch
+git apply --ignore-whitespace ../ofr-paddy/patches/swatplus-rev62-ofr-paddy.patch
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTAG=ofr-paddy
 cmake --build build -j 8
 ```
@@ -96,9 +97,13 @@ statement says how to obtain them.
 
 ## License
 
-The SWAT+ source code and the modified files are distributed under the GNU Lesser General
-Public License v2.1, the license of upstream SWAT+ (see `LICENSE`). Configuration tables,
-scripts and documentation are released under the same license unless stated otherwise.
+This repository uses two licenses:
+
+- `patches/` and `swatplus_src_changes/` modify SWAT+ source code. They are distributed under
+  the GNU Lesser General Public License v2.1, the license of upstream SWAT+
+  (see `LICENSE.LGPL-2.1`).
+- Everything else (configuration tables, scripts and documentation) is released under the MIT
+  License (see `LICENSE`).
 
 ## Citation
 

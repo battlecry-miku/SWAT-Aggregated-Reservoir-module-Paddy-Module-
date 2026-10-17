@@ -1,9 +1,12 @@
 cff-version: 1.2.0
 message: "If you use this software, please cite the associated paper and SWAT+."
-title: "swatplus-ofr-paddy: SWAT+ rev.62 extension for aggregated on-farm reservoirs coupled with paddy irrigation"
+title: "SWAT-Aggregated-Reservoir-module-Paddy-Module: SWAT+ rev.62 extension for aggregated on-farm reservoirs coupled with paddy irrigation"
 type: software
 version: 0.1.0
-license: LGPL-2.1-only
+repository-code: "https://github.com/battlecry-miku/SWAT-Aggregated-Reservoir-module-Paddy-Module-"
+license:
+  - LGPL-2.1-only
+  - MIT
 authors:
   - family-names: Zhu
     given-names: Zhe
