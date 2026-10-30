@@ -3,7 +3,7 @@ message: "If you use this software, please cite the associated paper and SWAT+."
 title: "SWAT-Aggregated-Reservoir-module-Paddy-Module: SWAT+ rev.62 extension for aggregated on-farm reservoirs coupled with paddy irrigation"
 type: software
 version: 0.1.0
-repository-code: "https://github.com/battlecry-miku/SWAT-Aggregated-Reservoir-module-Paddy-Module-"
+repository-code: "https://github.com/battlecry-miku/SWAT-Aggregated-Reservoir-module-Paddy-Module"
 license:
   - LGPL-2.1-only
   - MIT

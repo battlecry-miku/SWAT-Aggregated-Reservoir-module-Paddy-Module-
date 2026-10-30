@@ -19,8 +19,7 @@ A4 = os.path.join(W, 'result2_areacap2_20260911', 'native_runs', 'A4_single_rice
 OLD = os.path.join(W, 'result2_formal_20260910', 'native_runs')
 MAP = os.path.join(W, 'result2_single_rice_20260911', 'scenario_meta',
                    'A4_single_rice_supplyfix_validation_paddy_hru_res_cha_map.csv')
-QDB = ('C:/Users/Zhe Zhu/Documents/Codex/2026-07-06/new-chat/model/taoxi_qswat_official_ofr/'
-       'taoxi_strict_station_upstream_v2/DatabaseBackups/Taoxi_Strict_Station_OFR_v2_bak_20260802-093059.sqlite')
+QDB = os.environ.get('SWAT_OFR_QSWAT_DB', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'private_inputs', 'project.sqlite'))
 SCALE_FILES = ['reservoir.con', 'reservoir.res', 'hydrology.res', 'object.cnt', 'object.prt']
 REL = 'S3_stage61_c_rel'
 CANAL = 518e6

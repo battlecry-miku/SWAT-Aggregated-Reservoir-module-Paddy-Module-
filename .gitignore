@@ -1,17 +1,27 @@
-# build output and binaries (attach the executable to a GitHub release instead)
-build/
-*.exe
-*.obj
-*.mod
-
-# Python
-__pycache__/
-*.pyc
-
-# SWAT+ run outputs
-*_day.txt
-*_mon.txt
-*_yr.txt
-*_aa.txt
-fort.*
-*.log
+# Methods-only distribution: allow only source and documentation.
+/*
+!/.gitignore
+!/.gitattributes
+!/README.md
+!/CITATION.cff
+!/LICENSE
+!/LICENSE.LGPL-2.1
+!/docs/
+/docs/*
+!/docs/*.md
+!/config/
+/config/*
+!/config/README.md
+!/scripts/
+/scripts/*
+!/scripts/*.py
+!/scripts/README.md
+!/patches/
+/patches/*
+!/patches/*.patch
+!/swatplus_src_changes/
+/swatplus_src_changes/*
+!/swatplus_src_changes/CMakeLists.txt
+!/swatplus_src_changes/src/
+/swatplus_src_changes/src/*
+!/swatplus_src_changes/src/*.f90

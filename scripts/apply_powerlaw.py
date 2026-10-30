@@ -24,8 +24,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 W = os.path.join(HERE, 'swat_real_rerun_20260830')
 GPKG = os.path.join(W, 's7_aggregation_20260909', 'S7_rebuilt_QSWAT_project', 'Watershed', 'Derived_Taoxi_Only',
                     'taoxi_upstream_pond_rice_layers.gpkg')
-LSU = ('C:/Users/Zhe Zhu/Documents/Codex/2026-07-06/new-chat/model/taoxi_qswat_official_ofr/'
-       'taoxi_strict_station_upstream_v2/Watershed/Shapes/lsus1.shp')
+LSU = os.environ.get('SWAT_OFR_LSU', os.path.join(HERE, 'private_inputs', 'lsus.shp'))
 A4 = os.path.join(W, 'result2_areacap2_20260911', 'native_runs', 'A4_single_rice_areacap', 'TxtInOut')
 A3 = os.path.join(W, 'result2_formal_20260910', 'native_runs', 'A3_BASE', 'TxtInOut')
 A2_GROUPS = os.path.join(W, 's7_aggregation_20260909', 'tables', 'S7_merged24_aggregated_reservoir_properties.csv')
